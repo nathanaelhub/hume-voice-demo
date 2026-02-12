@@ -1,21 +1,30 @@
-# Hume EVI x Claude Voice Assistant
+# Voice AI Demo
 
-A real-time voice AI pipeline that composes **Hume EVI** (voice + emotion detection) with **Claude** (reasoning) through a custom language model server.
-
-Built for the **Layer 2: Build Your Own App** assignment (Days 1-3).
+A voice AI demo that combines **Hume AI** (voice and emotion) with **Claude** and **ChatGPT** (thinking). Talk to an AI by voice, switch between providers, and see how the pieces fit together.
 
 ## What This Demo Shows
 
-- **API Composition** — Hume handles voice, Claude handles thinking, your server connects them
-- **Emotion Detection** — Hume's prosody analysis detects emotions from voice tone
-- **Pipeline Visualization** — See every step: Listening → Transcribed → Thinking → Speaking
-- **Bring Your Own LLM** — The CLM architecture lets you swap Claude for any LLM
+- **Live Voice-to-Voice** — Talk naturally, get spoken responses, interrupt the AI anytime
+- **Switch AI Providers** — Toggle between Claude and ChatGPT with one click
+- **Emotion Detection** — Hume detects emotion from your tone of voice
+- **Three Ways to Interact** — Text chat, text + voice response, and full voice-to-voice
+
+## Tabs
+
+| Tab | What It Does |
+|-----|-------------|
+| **Text Chat** | Type a message, get a text response |
+| **Text + Voice** | Type a message, hear the response spoken aloud |
+| **Voice to Voice** | Speak naturally, AI responds by voice in real time |
+| **Documentation** | How the app works and what's under the hood |
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Clone and Install
 
 ```bash
+git clone https://github.com/nathanaelhub/hume-voice-demo.git
+cd hume-voice-demo
 pip install -r requirements.txt
 ```
 
@@ -23,96 +32,64 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env with your actual API keys:
-#   ANTHROPIC_API_KEY  — from https://console.anthropic.com/
-#   HUME_API_KEY       — from https://platform.hume.ai/
-#   HUME_CONFIG_ID     — from your Hume EVI configuration
 ```
 
-### 3. Start the CLM Server
+Edit `.env` with your API keys:
+
+| Key | Where to Get It | Required For |
+|-----|----------------|--------------|
+| `HUME_API_KEY` | [platform.hume.ai](https://platform.hume.ai/) | Voice-to-Voice tab |
+| `HUME_SECRET_KEY` | Same Hume dashboard (API keys section) | Voice-to-Voice tab |
+| `HUME_CONFIG_ID` | Hume EVI config page | Voice-to-Voice tab |
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) | Claude provider |
+| `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com/) | ChatGPT provider |
+
+### 3. Run the App
 
 ```bash
+# Start the backend server (handles AI requests)
 python clm_server/server.py
-```
 
-The server runs on `http://localhost:8000`. Visit `http://localhost:8000/docs` for the auto-generated API docs.
-
-### 4. Start the Streamlit Frontend
-
-```bash
+# In another terminal, start the app
 streamlit run frontend/app.py
 ```
 
-### 5. Test Without Voice
+Open **http://localhost:8501** in your browser.
 
-Use the "Test Chat" section in the Streamlit app, or hit the API directly:
-
-```bash
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello! How are you?", "emotions": [{"name": "joy", "score": 0.8}]}'
-```
-
-### 6. Connect Hume EVI (Voice Mode)
-
-```bash
-# Expose your CLM server
-ngrok http 8000
-
-# Configure Hume EVI at https://platform.hume.ai/
-# Set CLM URL to: wss://YOUR-NGROK-URL/ws/clm
-```
-
-### Switching Hume Accounts / Voice Configurations
-
-Your `.env` file contains three Hume values:
-
-```bash
-HUME_API_KEY=your-key
-HUME_SECRET_KEY=your-secret
-HUME_CONFIG_ID=your-config-id
-```
-
-**These are fully swappable.** If you replace them with someone else's credentials (e.g. your professor's paid account), the app will use *their* Hume configuration — no code changes needed.
-
-**What changes when you swap:**
-- **`HUME_API_KEY` / `HUME_SECRET_KEY`** — Controls which Hume account is used (and who gets billed)
-- **`HUME_CONFIG_ID`** — Controls the EVI configuration, which includes:
-  - **Voice selection** (male vs. female vs. custom voice)
-  - System prompt and language model settings
-  - Prosody/emotion detection settings
-
-So if your config uses a female voice and your professor's config uses a male voice, swapping the Config ID will change the voice. The rest of the app stays the same.
-
-**To keep your voice but use another account's billing:** Ask them to create a new EVI config on their account with your preferred voice, then use that Config ID.
-
-## Project Structure
+## How It Works
 
 ```
-hume-voice-demo/
-├── clm_server/
-│   ├── server.py              # FastAPI server bridging Hume EVI ↔ Claude
-│   └── requirements.txt
-├── frontend/
-│   ├── app.py                 # Streamlit dashboard
-│   └── components/
-│       ├── architecture_panel.py   # Educational architecture diagram
-│       └── pipeline_display.py     # Real-time pipeline visualization
-├── docs/
-│   └── architecture.md        # Architecture documentation
-├── .env.example               # Environment variable template
-├── requirements.txt           # All dependencies
-└── README.md
+Voice-to-Voice:
+  You speak → Hume AI (handles voice + emotion) → Claude or ChatGPT (thinks) → You hear a response
+
+Text tabs:
+  You type → Claude or ChatGPT → You read the response
 ```
 
-## Architecture
+Hume AI handles everything about voice — listening, detecting when you're done talking, speaking the response, and reading your emotion from your tone. Claude or ChatGPT handles the actual thinking and answering.
 
-```
-User Voice → Hume EVI → CLM Server → Claude API
-User Voice ← Hume EVI ← CLM Server ← Claude API
-                 │
-          Emotion/Prosody
-            Detection
-```
+## FAQ
 
-See [docs/architecture.md](docs/architecture.md) for the full breakdown.
+### Do I need API keys?
+
+Yes. You'll need keys for the AI providers you want to use (Claude, ChatGPT, or both). Your professor may share Hume voice credentials with the class — just paste them into your `.env` file.
+
+### If my professor changes the AI voice, do I need to do anything?
+
+No. Voice changes happen on Hume's website and take effect automatically the next time you click the mic button. You don't need to change any code or settings.
+
+### How long can a voice conversation go?
+
+As long as the mic is active, you can keep talking back and forth. Clicking the mic to stop and starting again begins a fresh conversation.
+
+### What browser should I use?
+
+Chrome works best. Firefox and Edge also work. Safari may have issues.
+
+### The mic isn't working — what do I do?
+
+Make sure you allowed microphone access when the browser asked. If you accidentally blocked it, click the lock icon in the address bar and allow microphone access, then refresh the page.
+
+### Can I switch between Claude and ChatGPT?
+
+Yes — use the toggle in the sidebar. It switches instantly on all tabs.
