@@ -461,6 +461,15 @@ async function startSession() {{
   }}
 
   ws.onopen = () => {{
+    // Send session settings to configure the AI's behavior
+    ws.send(JSON.stringify({{
+      type: 'session_settings',
+      system_prompt: 'You are a helpful, empathetic voice assistant. '
+        + 'Listen carefully to the user\\'s question and respond directly to what they asked. '
+        + 'Keep responses concise and conversational (1-3 sentences) since they will be spoken aloud. '
+        + 'Never introduce yourself or give a generic greeting unless the user greets you first. '
+        + 'If the user asks a question, answer it. If they make a statement, respond to it naturally.'
+    }}));
     setState(S.LISTENING);
     mediaRecorder.start(100);
   }};
