@@ -1,29 +1,66 @@
 """
-Tab 3: Voice to Voice
-=======================
-Record your voice → AI transcribes → thinks → speaks back.
-Uses Streamlit's native audio input for reliable mic access,
-Python SpeechRecognition for STT, and gTTS for TTS.
+Tab 3: Voice to Voice — Live Hume EVI  (Atmos theme)
+======================================================
+True real-time voice conversation powered by Hume EVI.
+Browser connects directly to Hume's WebSocket for
+mic capture, speech detection, TTS, and interruption.
 """
 
-import hashlib
-import io
+import base64
+import os
+import time
 
 import httpx
 import streamlit as st
+import streamlit.components.v1 as components
 
-try:
-    import speech_recognition as sr
-    SR_AVAILABLE = True
-except ImportError:
-    SR_AVAILABLE = False
+from components.theme import PROVIDER_CONFIG, COLORS
 
-try:
-    from gtts import gTTS
-    GTTS_AVAILABLE = True
-except ImportError:
-    GTTS_AVAILABLE = False
 
+# ---------------------------------------------------------------------------
+# Hume OAuth2 token
+# ---------------------------------------------------------------------------
+
+def _get_hume_access_token() -> str | None:
+    """Generate a Hume access token via OAuth2 client credentials.
+
+    Caches in session_state for up to 25 minutes (tokens valid ~30 min).
+    """
+    cached = st.session_state.get("_hume_token")
+    cached_time = st.session_state.get("_hume_token_time", 0)
+    if cached and (time.time() - cached_time) < 25 * 60:
+        return cached
+
+    api_key = os.getenv("HUME_API_KEY", "")
+    secret_key = os.getenv("HUME_SECRET_KEY", "")
+    if not api_key or not secret_key:
+        return None
+
+    creds = base64.b64encode(f"{api_key}:{secret_key}".encode()).decode()
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(
+                "https://api.hume.ai/oauth2-cc/token",
+                headers={
+                    "Authorization": f"Basic {creds}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                content="grant_type=client_credentials",
+            )
+            resp.raise_for_status()
+            token = resp.json().get("access_token")
+    except Exception:
+        return None
+
+    if token:
+        st.session_state["_hume_token"] = token
+        st.session_state["_hume_token_time"] = time.time()
+    return token
+
+
+# ---------------------------------------------------------------------------
+# Main render
+# ---------------------------------------------------------------------------
 
 def render_voice_voice_tab(
     clm_url: str,
@@ -31,256 +68,711 @@ def render_voice_voice_tab(
     pipeline_state: dict,
     history: list[dict],
 ):
-    """Render the Voice to Voice tab."""
+    """Render the live Voice-to-Voice tab powered by Hume EVI."""
 
-    if not clm_connected:
-        st.warning("**Server not running.** Run: `python clm_server/server.py`")
+    api_key = os.getenv("HUME_API_KEY", "")
+    secret_key = os.getenv("HUME_SECRET_KEY", "")
+    config_id = os.getenv("HUME_CONFIG_ID", "")
+
+    if not all([api_key, secret_key, config_id]):
+        st.warning(
+            "**Hume EVI not configured.** Add `HUME_API_KEY`, "
+            "`HUME_SECRET_KEY`, and `HUME_CONFIG_ID` to your `.env` file.\n\n"
+            "Get credentials at [platform.hume.ai](https://platform.hume.ai/)"
+        )
         return
 
-    if not SR_AVAILABLE:
-        st.warning("**SpeechRecognition not installed.** Run: `pip install SpeechRecognition`")
+    token = _get_hume_access_token()
+    if not token:
+        st.error("Failed to get Hume access token. Check your API key and secret key.")
         return
 
     provider = st.session_state.get("active_provider", "claude")
-    provider_color = "#7C3AED" if provider == "claude" else "#10A37F"
-    provider_name = "Claude" if provider == "claude" else "ChatGPT"
+    cfg = PROVIDER_CONFIG.get(provider, PROVIDER_CONFIG["claude"])
 
-    stage = st.session_state.get("voice_stage", "idle")
-
-    # ---- Waveform + status ----
-    _render_waveform_header(stage, provider_name, provider_color)
-
-    # ---- Record button ----
-    st.markdown("")
-    audio_data = st.audio_input(
-        "Tap to record, tap again to stop",
-        key="voice_recorder",
+    html = _build_evi_html(
+        access_token=token,
+        config_id=config_id,
+        provider_name=cfg["name"],
+        provider_color=cfg["color"],
     )
-
-    # ---- Process new recording ----
-    if audio_data is not None:
-        # Hash audio bytes to detect genuinely new recordings
-        audio_data.seek(0)
-        audio_hash = hashlib.md5(audio_data.read()).hexdigest()
-        audio_data.seek(0)
-
-        if audio_hash != st.session_state.get("_last_audio_hash"):
-            st.session_state["_last_audio_hash"] = audio_hash
-            _process_voice(audio_data, clm_url, provider_name, provider_color, history)
-
-    # ---- Conversation subtitles ----
-    _render_subtitles(history, provider_color)
+    components.html(html, height=700, scrolling=False)
 
 
 # ---------------------------------------------------------------------------
-# Processing pipeline
+# HTML builder
 # ---------------------------------------------------------------------------
 
-def _process_voice(
-    audio_data,
-    clm_url: str,
+def _build_evi_html(
+    access_token: str,
+    config_id: str,
     provider_name: str,
     provider_color: str,
-    history: list[dict],
-):
-    """Pipeline: STT → CLM → TTS → playback, with live status updates."""
+) -> str:
+    """Build the complete self-contained HTML/CSS/JS for the live EVI widget."""
 
-    with st.status("Processing your voice...", expanded=True) as status:
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Outfit:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
-        # Step 1 — Transcribe
-        st.write("Transcribing audio...")
-        recognizer = sr.Recognizer()
-        try:
-            audio_data.seek(0)
-            with sr.AudioFile(audio_data) as source:
-                audio = recognizer.record(source)
-            text = recognizer.recognize_google(audio)
-        except sr.UnknownValueError:
-            status.update(label="Couldn't understand", state="error")
-            st.warning("Couldn't understand the audio. Try speaking louder or closer to the mic.")
-            return
-        except sr.RequestError as e:
-            status.update(label="STT service error", state="error")
-            st.error(f"Speech recognition service error: {e}")
-            return
-        except Exception as e:
-            status.update(label="Transcription failed", state="error")
-            st.error(f"Transcription error: {e}")
-            return
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:transparent; overflow:hidden; font-family:'Outfit',sans-serif; color:{COLORS['text']}; }}
 
-        st.write(f'You said: **"{text}"**')
+#app {{
+  display:flex; flex-direction:column; align-items:center;
+  height:690px; padding:12px 20px 0 20px;
+}}
 
-        # Step 2 — Send to AI
-        st.write(f"Asking {provider_name}...")
-        try:
-            with httpx.Client(timeout=30) as client:
-                resp = client.post(
-                    f"{clm_url}/chat",
-                    json={"message": text, "emotions": []},
-                )
-                data = resp.json()
-        except Exception as e:
-            status.update(label="Server error", state="error")
-            st.error(f"Server error: {e}")
-            history.append({"user": text, "ai": f"Error: {e}", "provider": provider_name, "latency_ms": 0})
-            return
+/* ── Status bar ────────────────────────── */
+#status-bar {{
+  display:flex; align-items:center; justify-content:center; gap:10px;
+  margin-bottom:8px; min-height:24px;
+}}
+#status-text {{
+  font-family:'IBM Plex Mono',monospace; font-size:0.72rem;
+  letter-spacing:1.5px; text-transform:uppercase;
+  color:{COLORS['text_muted']}; transition:color 0.3s;
+}}
+#provider-badge {{
+  background:{provider_color}22; color:{provider_color};
+  padding:2px 12px; border-radius:10px; font-size:0.7rem;
+  font-weight:600; font-family:'IBM Plex Mono',monospace;
+  letter-spacing:0.03em;
+}}
 
-        response_text = data.get("response", "No response")
-        latency = data.get("latency_ms", "?")
-        st.write(f"{provider_name}: *{response_text}*")
+/* ── Waveform ──────────────────────────── */
+#waveform-wrap {{
+  position:relative; width:100%; max-width:600px;
+  background:{COLORS['surface']}; border:1px solid {COLORS['border_light']};
+  border-radius:16px; padding:16px 20px;
+  backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+  box-shadow:0 0 40px {provider_color}10, inset 0 0 60px {COLORS['bg']}40;
+  transition:box-shadow 0.4s;
+  margin-bottom:16px;
+}}
+#waveform-wrap.active {{
+  box-shadow:0 0 50px {provider_color}25, 0 0 100px {provider_color}0a, inset 0 0 60px {COLORS['bg']}40;
+}}
+#waveform-glow {{
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  width:320px; height:320px; border-radius:50%; pointer-events:none;
+  background:radial-gradient(circle,{provider_color}0c,{provider_color}00);
+  transition:all 0.5s;
+}}
+#waveform-wrap.active #waveform-glow {{
+  width:400px; height:400px;
+  background:radial-gradient(circle,{provider_color}28,{provider_color}00);
+}}
+canvas#waveform {{
+  display:block; width:100%; height:150px; position:relative; z-index:1;
+}}
 
-        # Step 3 — Generate speech
-        st.write("Generating speech...")
-        audio_bytes = _text_to_audio(response_text)
+/* ── Mic button ────────────────────────── */
+#mic-area {{
+  display:flex; flex-direction:column; align-items:center;
+  margin-bottom:16px;
+}}
+#mic-btn {{
+  width:80px; height:80px; border-radius:50%;
+  background:transparent; border:2px solid {provider_color}44;
+  cursor:pointer; position:relative;
+  display:flex; align-items:center; justify-content:center;
+  transition:all 0.3s ease; color:{COLORS['text_muted']};
+  outline:none;
+}}
+#mic-btn:hover {{
+  border-color:{provider_color}88;
+  box-shadow:0 0 24px {provider_color}20;
+  color:{COLORS['text']};
+}}
+#mic-btn svg {{ width:32px; height:32px; transition:color 0.3s; }}
 
-        status.update(label="Done!", state="complete")
+/* Pulse ring behind mic when idle */
+#mic-btn::before {{
+  content:''; position:absolute; inset:-6px;
+  border:2px solid {provider_color}30; border-radius:50%;
+  animation:pulse-ring 2.5s ease-out infinite;
+}}
+@keyframes pulse-ring {{
+  0% {{ transform:scale(1); opacity:0.7; }}
+  100% {{ transform:scale(1.5); opacity:0; }}
+}}
 
-    # Save to history
-    history.append({
-        "user": text,
-        "ai": response_text,
-        "provider": provider_name,
-        "latency_ms": latency,
-        "audio": audio_bytes,
-    })
+/* State-specific mic styles */
+#mic-btn.connecting {{
+  border-color:{provider_color}; color:{provider_color};
+}}
+#mic-btn.connecting::before {{ animation:none; opacity:0; }}
 
-    # Cap history
-    if len(history) > 30:
-        del history[:len(history) - 30]
+#mic-btn.listening {{
+  border-color:{provider_color}; background:{provider_color}15;
+  color:{provider_color}; box-shadow:0 0 30px {provider_color}25;
+}}
+#mic-btn.listening::before {{
+  border-color:{provider_color}50;
+  animation:pulse-ring 2s ease-out infinite;
+}}
 
+#mic-btn.thinking {{
+  border-color:#F59E0B; background:#F59E0B15;
+  color:#F59E0B; box-shadow:0 0 30px #F59E0B20;
+}}
+#mic-btn.thinking::before {{
+  border-color:#F59E0B40;
+  animation:pulse-ring 1.5s ease-out infinite;
+}}
 
-def _text_to_audio(text: str) -> bytes | None:
-    """Convert text to MP3 bytes via gTTS."""
-    if not GTTS_AVAILABLE:
-        return None
-    try:
-        tts = gTTS(text=text, lang="en")
-        buf = io.BytesIO()
-        tts.write_to_fp(buf)
-        buf.seek(0)
-        return buf.read()
-    except Exception:
-        return None
+#mic-btn.speaking {{
+  border-color:#10B981; background:#10B98115;
+  color:#10B981; box-shadow:0 0 30px #10B98120;
+}}
+#mic-btn.speaking::before {{
+  border-color:#10B98140;
+  animation:pulse-ring 2s ease-out infinite;
+}}
 
+#mic-label {{
+  font-family:'IBM Plex Mono',monospace; font-size:0.78rem;
+  color:{COLORS['text_muted']}; margin-top:10px;
+  letter-spacing:0.5px; transition:color 0.3s;
+}}
 
-# ---------------------------------------------------------------------------
-# Subtitles display
-# ---------------------------------------------------------------------------
+/* ── Subtitles ─────────────────────────── */
+#subtitles {{
+  width:100%; max-width:600px; flex:1;
+  overflow-y:auto; padding:4px 8px;
+  scrollbar-width:thin; scrollbar-color:{COLORS['border_light']} transparent;
+}}
+#subtitles::-webkit-scrollbar {{ width:4px; }}
+#subtitles::-webkit-scrollbar-thumb {{ background:{COLORS['border_light']}; border-radius:2px; }}
 
-def _render_subtitles(history: list[dict], provider_color: str):
-    """Render the conversation as subtitles below the waveform."""
+.sub {{
+  opacity:0; transform:translateY(6px);
+  transition:opacity 0.3s, transform 0.3s;
+  margin-bottom:10px; padding:6px 0;
+}}
+.sub.show {{ opacity:1; transform:translateY(0); }}
+.sub-label {{
+  font-family:'IBM Plex Mono',monospace; font-size:0.63rem;
+  letter-spacing:1px; text-transform:uppercase;
+  color:{COLORS['text_muted']};
+}}
+.sub-text {{
+  font-family:'Outfit',sans-serif; font-size:0.95rem;
+  margin-top:2px; line-height:1.4;
+}}
+.sub-user {{ text-align:right; }}
+.sub-user .sub-text {{ color:{COLORS['text']}; }}
+.sub-ai {{ text-align:left; }}
+.sub-ai .sub-text {{ color:{provider_color}; }}
+.sub-divider {{
+  height:1px; background:{COLORS['border']}; opacity:0.4;
+  margin:4px 0 8px 0;
+}}
 
-    if not history:
-        st.caption("Your conversation will appear here.")
-        return
+/* ── Error overlay ─────────────────────── */
+#error-overlay {{
+  display:none; position:fixed; inset:0; z-index:100;
+  background:rgba(6,7,13,0.85); backdrop-filter:blur(8px);
+  flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; padding:30px;
+}}
+#error-overlay.show {{ display:flex; }}
+#error-msg {{
+  font-size:1rem; color:{COLORS['text']}; max-width:400px;
+  margin-bottom:16px; line-height:1.5;
+}}
+#error-btn {{
+  background:{COLORS['surface_alt']}; color:{COLORS['text']};
+  border:1px solid {COLORS['border_light']}; border-radius:10px;
+  padding:8px 24px; cursor:pointer; font-family:'Outfit',sans-serif;
+  font-size:0.9rem; transition:all 0.2s;
+}}
+#error-btn:hover {{
+  border-color:{provider_color}; box-shadow:0 0 12px {provider_color}20;
+}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="status-bar">
+    <span id="status-text">READY</span>
+    <span id="provider-badge">{provider_name}</span>
+  </div>
 
-    for entry in history:
-        # User message — right-aligned, blue
-        st.markdown(
-            f"""<div style="text-align:right; margin-bottom:4px;">
-                <span style="font-size:0.7rem; color:#6B7280; text-transform:uppercase;
-                    letter-spacing:1px;">You said</span><br>
-                <span style="color:#93C5FD; font-size:1rem;">{entry['user']}</span>
-            </div>""",
-            unsafe_allow_html=True,
-        )
+  <div id="waveform-wrap">
+    <div id="waveform-glow"></div>
+    <canvas id="waveform"></canvas>
+  </div>
 
-        # AI response — left-aligned, provider color
-        st.markdown(
-            f"""<div style="text-align:left; margin-bottom:12px;">
-                <span style="font-size:0.7rem; color:#6B7280; text-transform:uppercase;
-                    letter-spacing:1px;">{entry['provider']} says</span><br>
-                <span style="color:{provider_color}; font-size:1rem;">{entry['ai']}</span>
-                <span style="font-size:0.7rem; color:#4B5563; margin-left:8px;">
-                    {entry.get('latency_ms', '?')}ms</span>
-            </div>""",
-            unsafe_allow_html=True,
-        )
+  <div id="mic-area">
+    <button id="mic-btn" aria-label="Start voice conversation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+    </button>
+    <div id="mic-label">Tap to start</div>
+  </div>
 
-        # Auto-play the latest response audio
-        if entry.get("audio") and entry is history[-1]:
-            st.audio(entry["audio"], format="audio/mp3", autoplay=True)
+  <div id="subtitles"></div>
+</div>
 
+<div id="error-overlay">
+  <div id="error-msg"></div>
+  <button id="error-btn" onclick="dismissError()">Try Again</button>
+</div>
 
-# ---------------------------------------------------------------------------
-# Waveform header (CSS animated, no JS/iframe needed)
-# ---------------------------------------------------------------------------
+<script>
+// ── Config (injected by Python) ───────────────────────────
+const ACCESS_TOKEN = "{access_token}";
+const CONFIG_ID = "{config_id}";
+const PROVIDER_NAME = "{provider_name}";
+const PROVIDER_COLOR = "{provider_color}";
 
-def _render_waveform_header(stage: str, provider_name: str, provider_color: str):
-    """Render an animated waveform with stage-based colors."""
+// ── State machine ─────────────────────────────────────────
+const S = {{ IDLE:'idle', CONNECTING:'connecting', LISTENING:'listening',
+             THINKING:'ai_thinking', SPEAKING:'ai_speaking' }};
+let state = S.IDLE;
 
-    stages = {
-        "idle":         {"color": "#4B5563", "label": "TAP RECORD TO START", "speed": "0s"},
-        "transcribing": {"color": "#3B82F6", "label": "TRANSCRIBING...",     "speed": "0.6s"},
-        "thinking":     {"color": "#F59E0B", "label": "THINKING...",         "speed": "1.0s"},
-        "speaking":     {"color": "#10B981", "label": "SPEAKING...",         "speed": "0.35s"},
-    }
-    cfg = stages.get(stage, stages["idle"])
-    color = cfg["color"]
-    label = cfg["label"]
-    speed = cfg["speed"]
-    active = stage != "idle"
+const micBtn   = document.getElementById('mic-btn');
+const micLabel = document.getElementById('mic-label');
+const statusEl = document.getElementById('status-text');
+const wrapEl   = document.getElementById('waveform-wrap');
+const subsEl   = document.getElementById('subtitles');
 
-    # Build bars
-    num_bars = 48
-    bars = []
-    for i in range(num_bars):
-        center = num_bars / 2
-        dist = abs(i - center) / center
-        base_h = max(4, int(70 * (1 - dist ** 1.4)))
+const labels = {{
+  [S.IDLE]:       'Tap to start',
+  [S.CONNECTING]: 'Connecting...',
+  [S.LISTENING]:  'Listening...',
+  [S.THINKING]:   'Thinking...',
+  [S.SPEAKING]:   'Speaking...',
+}};
+const statusLabels = {{
+  [S.IDLE]:       'READY',
+  [S.CONNECTING]: 'CONNECTING',
+  [S.LISTENING]:  'LISTENING',
+  [S.THINKING]:   'PROCESSING',
+  [S.SPEAKING]:   'RESPONDING',
+}};
+const btnClass = {{
+  [S.IDLE]:       '',
+  [S.CONNECTING]: 'connecting',
+  [S.LISTENING]:  'listening',
+  [S.THINKING]:   'thinking',
+  [S.SPEAKING]:   'speaking',
+}};
 
-        if not active:
-            h = max(3, int(base_h * 0.06))
-            bars.append(
-                f'<div style="width:3px;height:{h}px;background:{color}55;'
-                f'border-radius:2px;transition:height 0.5s;"></div>'
-            )
-        else:
-            min_h = max(3, int(base_h * 0.12))
-            max_h = max(10, int(base_h * 0.9))
-            delay = round((i / num_bars) * 0.8, 2)
-            bars.append(
-                f'<div style="width:3px;height:{max_h}px;background:{color};'
-                f'border-radius:2px;'
-                f'animation:vb{i} {speed} ease-in-out {delay}s infinite alternate;"></div>'
-                f'<style>@keyframes vb{i}{{0%{{height:{min_h}px;opacity:.5}}'
-                f'100%{{height:{max_h}px;opacity:1}}}}</style>'
-            )
+function setState(s) {{
+  state = s;
+  micBtn.className = btnClass[s] || '';
+  micLabel.textContent = labels[s] || '';
+  statusEl.textContent = statusLabels[s] || '';
+  if (s === S.IDLE) {{
+    wrapEl.classList.remove('active');
+    statusEl.style.color = '';
+  }} else {{
+    wrapEl.classList.add('active');
+  }}
+}}
 
-    glow = (
-        f'<div style="position:absolute;top:50%;left:50%;'
-        f'transform:translate(-50%,-50%);width:220px;height:220px;'
-        f'background:radial-gradient(circle,{color}22,{color}00);'
-        f'border-radius:50%;pointer-events:none;"></div>'
-        if active else ""
-    )
+// ── Audio contexts & nodes ────────────────────────────────
+let micStream = null;
+let mediaRecorder = null;
+let audioCtx = null;
+let micAnalyser = null;
+let playCtx = null;
+let playAnalyser = null;
+let ws = null;
+let audioQueue = [];
+let isPlaying = false;
 
-    dot = (
-        f'<span style="display:inline-block;width:8px;height:8px;'
-        f'background:{color};border-radius:50%;margin-right:8px;'
-        f'animation:gdot 1s infinite;"></span>'
-        if active else ""
-    )
+// ── Mic button click ──────────────────────────────────────
+micBtn.addEventListener('click', async () => {{
+  if (state === S.IDLE) {{
+    await startSession();
+  }} else {{
+    stopSession();
+  }}
+}});
 
-    html = f"""
-    <div style="background:#0f0f1f;border-radius:16px;padding:20px 28px;
-        margin:0 0 8px 0;text-align:center;position:relative;overflow:hidden;">
-        {glow}
-        <div style="color:{color};font-size:0.8rem;font-weight:600;
-            letter-spacing:2px;margin-bottom:14px;position:relative;">
-            {dot}{label}
-        </div>
-        <div style="display:flex;align-items:center;justify-content:center;
-            gap:2px;height:90px;position:relative;">
-            {''.join(bars)}
-        </div>
-        <div style="margin-top:12px;display:inline-block;
-            background:{provider_color}33;color:{provider_color};
-            padding:3px 12px;border-radius:10px;font-size:0.72rem;
-            font-weight:600;">
-            {provider_name}
-        </div>
-    </div>
-    <style>@keyframes gdot{{0%,100%{{opacity:1}}50%{{opacity:.3}}}}</style>
-    """
-    st.markdown(html, unsafe_allow_html=True)
+async function startSession() {{
+  // Check browser support
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
+    showError('Your browser does not support microphone access. Use Chrome, Firefox, or Edge.');
+    return;
+  }}
+
+  setState(S.CONNECTING);
+
+  // Get mic
+  try {{
+    micStream = await navigator.mediaDevices.getUserMedia({{
+      audio: {{ echoCancellation:true, noiseSuppression:true, autoGainControl:true }}
+    }});
+  }} catch (e) {{
+    showError('Microphone access was denied. Please allow mic access in your browser and try again.');
+    setState(S.IDLE);
+    return;
+  }}
+
+  // Audio context for mic analyser (waveform vis)
+  try {{
+    audioCtx = new AudioContext();
+    const source = audioCtx.createMediaStreamSource(micStream);
+    micAnalyser = audioCtx.createAnalyser();
+    micAnalyser.fftSize = 256;
+    source.connect(micAnalyser);
+  }} catch (e) {{
+    // Non-fatal: waveform just won't animate
+  }}
+
+  // MediaRecorder to chunk mic audio — send as binary frames
+  try {{
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/webm';
+    mediaRecorder = new MediaRecorder(micStream, {{ mimeType }});
+    mediaRecorder.ondataavailable = async (ev) => {{
+      if (ev.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {{
+        // Send raw binary audio — Hume expects binary WebSocket frames
+        const arrayBuf = await ev.data.arrayBuffer();
+        ws.send(arrayBuf);
+      }}
+    }};
+  }} catch (e) {{
+    showError('Could not set up audio recording. Try a different browser.');
+    cleanup();
+    return;
+  }}
+
+  // Connect WebSocket to Hume EVI
+  try {{
+    const url = `wss://api.hume.ai/v0/evi/chat?access_token=${{ACCESS_TOKEN}}&config_id=${{CONFIG_ID}}`;
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+  }} catch (e) {{
+    showError('Could not connect to Hume. Check your internet connection.');
+    cleanup();
+    return;
+  }}
+
+  ws.onopen = () => {{
+    setState(S.LISTENING);
+    mediaRecorder.start(100);
+  }};
+
+  ws.onmessage = (ev) => {{
+    // Binary frames = audio output from Hume
+    if (ev.data instanceof ArrayBuffer) {{
+      if (state !== S.SPEAKING) setState(S.SPEAKING);
+      // Convert to base64 for our enqueue function
+      const bytes = new Uint8Array(ev.data);
+      audioQueue.push(bytes.buffer);
+      if (!isPlaying) playNext();
+      return;
+    }}
+    // Text frames = JSON messages
+    try {{ handleMsg(JSON.parse(ev.data)); }} catch(e) {{ console.error('msg parse error', e); }}
+  }};
+
+  ws.onerror = () => {{
+    showError('Connection error. Please try again.');
+    cleanup();
+  }};
+
+  ws.onclose = (ev) => {{
+    if (state !== S.IDLE) {{
+      if (ev.code === 1008 || ev.code === 4001 || ev.code === 4000) {{
+        showError('Session expired or invalid config. Click Try Again to reconnect.');
+      }}
+      cleanup();
+    }}
+  }};
+}}
+
+function stopSession() {{
+  cleanup();
+}}
+
+function cleanup() {{
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {{
+    try {{ mediaRecorder.stop(); }} catch(e) {{}}
+  }}
+  mediaRecorder = null;
+  if (micStream) {{
+    micStream.getTracks().forEach(t => t.stop());
+    micStream = null;
+  }}
+  if (ws) {{
+    try {{ ws.close(); }} catch(e) {{}}
+    ws = null;
+  }}
+  stopPlayback();
+  if (audioCtx) {{
+    try {{ audioCtx.close(); }} catch(e) {{}}
+    audioCtx = null;
+    micAnalyser = null;
+  }}
+  setState(S.IDLE);
+}}
+
+// ── Message handler ───────────────────────────────────────
+function handleMsg(msg) {{
+  switch (msg.type) {{
+    case 'user_message':
+      if (msg.message && msg.message.content) {{
+        addSub('user', msg.message.content);
+      }}
+      setState(S.THINKING);
+      break;
+
+    case 'assistant_message':
+      if (msg.message && msg.message.content) {{
+        addSub('ai', msg.message.content);
+      }}
+      break;
+
+    case 'audio_output':
+      if (state !== S.SPEAKING) setState(S.SPEAKING);
+      if (msg.data) enqueueAudio(msg.data);
+      break;
+
+    case 'user_interruption':
+      stopPlayback();
+      setState(S.LISTENING);
+      break;
+
+    case 'assistant_end':
+      waitForDrain();
+      break;
+
+    case 'error':
+      console.error('Hume error:', msg);
+      break;
+
+    default:
+      // chat_metadata, system messages, etc — ignore
+      break;
+  }}
+}}
+
+// ── Audio playback ────────────────────────────────────────
+function enqueueAudio(b64) {{
+  const raw = atob(b64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  audioQueue.push(bytes.buffer);
+  if (!isPlaying) playNext();
+}}
+
+function ensurePlayCtx() {{
+  if (!playCtx || playCtx.state === 'closed') {{
+    playCtx = new AudioContext();
+    playAnalyser = playCtx.createAnalyser();
+    playAnalyser.fftSize = 256;
+    playAnalyser.connect(playCtx.destination);
+  }}
+  if (playCtx.state === 'suspended') playCtx.resume();
+}}
+
+async function playNext() {{
+  if (audioQueue.length === 0) {{ isPlaying = false; return; }}
+  isPlaying = true;
+  ensurePlayCtx();
+
+  const buf = audioQueue.shift();
+  try {{
+    // Try decodeAudioData first (handles mp3, wav, opus, etc.)
+    const decoded = await playCtx.decodeAudioData(buf.slice(0));
+    const src = playCtx.createBufferSource();
+    src.buffer = decoded;
+    src.connect(playAnalyser);
+    src.onended = () => playNext();
+    src.start();
+  }} catch (e) {{
+    // Fallback: treat as raw Linear16 PCM at 24kHz
+    try {{
+      const int16 = new Int16Array(buf);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768.0;
+      const ab = playCtx.createBuffer(1, float32.length, 24000);
+      ab.getChannelData(0).set(float32);
+      const src = playCtx.createBufferSource();
+      src.buffer = ab;
+      src.connect(playAnalyser);
+      src.onended = () => playNext();
+      src.start();
+    }} catch (e2) {{
+      console.error('playback error', e2);
+      playNext();
+    }}
+  }}
+}}
+
+function stopPlayback() {{
+  audioQueue = [];
+  isPlaying = false;
+  if (playCtx) {{
+    try {{ playCtx.close(); }} catch(e) {{}}
+    playCtx = null;
+    playAnalyser = null;
+  }}
+}}
+
+function waitForDrain() {{
+  const check = setInterval(() => {{
+    if (!isPlaying && audioQueue.length === 0) {{
+      clearInterval(check);
+      if (state === S.SPEAKING) setState(S.LISTENING);
+    }}
+  }}, 100);
+}}
+
+// ── Helpers ───────────────────────────────────────────────
+function blobToBase64(blob) {{
+  return new Promise(resolve => {{
+    const r = new FileReader();
+    r.onloadend = () => resolve(r.result.split(',')[1]);
+    r.readAsDataURL(blob);
+  }});
+}}
+
+// ── Subtitles ─────────────────────────────────────────────
+function addSub(role, text) {{
+  const d = document.createElement('div');
+  d.className = 'sub sub-' + role;
+
+  const lbl = document.createElement('span');
+  lbl.className = 'sub-label';
+  lbl.textContent = role === 'user' ? 'YOU' : PROVIDER_NAME;
+
+  const txt = document.createElement('div');
+  txt.className = 'sub-text';
+  txt.textContent = text;
+
+  d.appendChild(lbl);
+  d.appendChild(txt);
+
+  // Divider before new entry (if not first)
+  if (subsEl.children.length > 0) {{
+    const div = document.createElement('div');
+    div.className = 'sub-divider';
+    subsEl.appendChild(div);
+  }}
+
+  subsEl.appendChild(d);
+  requestAnimationFrame(() => d.classList.add('show'));
+  subsEl.scrollTop = subsEl.scrollHeight;
+}}
+
+// ── Waveform (canvas) ─────────────────────────────────────
+const canvas = document.getElementById('waveform');
+const ctx2d = canvas.getContext('2d');
+const BAR_COUNT = 64;
+const BAR_W = 4;
+let animId = null;
+
+function initCanvas() {{
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx2d.scale(dpr, dpr);
+  return {{ w: rect.width, h: rect.height }};
+}}
+
+function drawFrame() {{
+  animId = requestAnimationFrame(drawFrame);
+  const {{ w, h }} = {{ w: canvas.getBoundingClientRect().width, h: canvas.getBoundingClientRect().height }};
+  ctx2d.clearRect(0, 0, w * 2, h * 2);
+
+  const gap = Math.max(1, (w - BAR_COUNT * BAR_W) / (BAR_COUNT - 1));
+
+  // Pick data source
+  let analyser = null;
+  let barColor = PROVIDER_COLOR;
+
+  if ((state === S.LISTENING) && micAnalyser) {{
+    analyser = micAnalyser;
+    barColor = PROVIDER_COLOR;
+  }} else if (state === S.SPEAKING && playAnalyser) {{
+    analyser = playAnalyser;
+    barColor = '#10B981';
+  }} else if (state === S.THINKING) {{
+    drawIdleBars(w, h, gap, '#F59E0B', 0.5);
+    return;
+  }} else if (state === S.CONNECTING) {{
+    drawIdleBars(w, h, gap, PROVIDER_COLOR, 0.3);
+    return;
+  }}
+
+  if (analyser) {{
+    const bufLen = analyser.frequencyBinCount;
+    const data = new Uint8Array(bufLen);
+    analyser.getByteFrequencyData(data);
+
+    for (let i = 0; i < BAR_COUNT; i++) {{
+      const di = Math.floor((i / BAR_COUNT) * bufLen);
+      const val = data[di] / 255;
+      const center = BAR_COUNT / 2;
+      const dist = Math.abs(i - center) / center;
+      const env = 1 - Math.pow(dist, 1.4);
+      const bh = Math.max(3, val * h * 0.85 * env);
+      const x = i * (BAR_W + gap);
+      const y = (h - bh) / 2;
+
+      const grad = ctx2d.createLinearGradient(x, y + bh, x, y);
+      grad.addColorStop(0, barColor + '60');
+      grad.addColorStop(1, barColor);
+      ctx2d.fillStyle = grad;
+      ctx2d.beginPath();
+      ctx2d.roundRect(x, y, BAR_W, bh, 2);
+      ctx2d.fill();
+    }}
+  }} else {{
+    drawIdleBars(w, h, gap, PROVIDER_COLOR, 0.2);
+  }}
+}}
+
+function drawIdleBars(w, h, gap, color, intensity) {{
+  const t = Date.now();
+  for (let i = 0; i < BAR_COUNT; i++) {{
+    const center = BAR_COUNT / 2;
+    const dist = Math.abs(i - center) / center;
+    const env = 1 - Math.pow(dist, 1.4);
+    const phase = (i / BAR_COUNT) * Math.PI * 2;
+    const breathe = 0.5 + 0.5 * Math.sin(t / 2000 + phase);
+    const maxH = 22 * env;
+    const bh = Math.max(3, maxH * (0.3 + 0.7 * breathe * intensity));
+    const x = i * (BAR_W + gap);
+    const y = (h - bh) / 2;
+    ctx2d.fillStyle = color + '30';
+    ctx2d.beginPath();
+    ctx2d.roundRect(x, y, BAR_W, bh, 2);
+    ctx2d.fill();
+  }}
+}}
+
+// ── Error overlay ─────────────────────────────────────────
+function showError(msg) {{
+  document.getElementById('error-msg').textContent = msg;
+  document.getElementById('error-overlay').classList.add('show');
+}}
+function dismissError() {{
+  document.getElementById('error-overlay').classList.remove('show');
+  cleanup();
+}}
+
+// ── Boot ──────────────────────────────────────────────────
+initCanvas();
+drawFrame();
+
+window.addEventListener('resize', () => {{
+  initCanvas();
+}});
+</script>
+</body></html>"""

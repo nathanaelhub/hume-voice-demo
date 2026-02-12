@@ -1,6 +1,6 @@
 """
-Tab 1: Text Chat
-==================
+Tab 1: Text Chat  (Atmos theme)
+==================================
 Simple text-to-text chat. Type a message, get a response.
 Shows which LLM answered and how long it took.
 """
@@ -8,14 +8,23 @@ Shows which LLM answered and how long it took.
 import httpx
 import streamlit as st
 
+from components.theme import provider_badge_html, PROVIDER_CONFIG, COLORS
+
 
 def render_text_chat_tab(clm_url: str, clm_connected: bool, active_provider: str):
     """Render the Text -> Text chat tab."""
 
-    st.markdown("Type a message and see how the AI responds.")
+    st.markdown(
+        f'<p style="font-family:\'Outfit\',sans-serif;color:{COLORS["text_secondary"]};">'
+        f'Type a message and see how the AI responds.</p>',
+        unsafe_allow_html=True,
+    )
 
     # Provider badge
-    _show_provider_badge(active_provider)
+    st.markdown(
+        f'<div style="margin-bottom:12px;">AI Brain: {provider_badge_html(active_provider)}</div>',
+        unsafe_allow_html=True,
+    )
 
     if not clm_connected:
         st.warning("**Server not running.** Open a terminal and run:\n\n"
@@ -31,8 +40,15 @@ def render_text_chat_tab(clm_url: str, clm_connected: bool, active_provider: str
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
             if msg["role"] == "assistant" and "provider" in msg:
-                provider_label = "Claude" if msg["provider"] == "claude" else "ChatGPT"
-                st.caption(f"{provider_label}  ·  {msg.get('latency_ms', '?')}ms")
+                badge = provider_badge_html(msg["provider"])
+                latency = msg.get("latency_ms", "?")
+                st.markdown(
+                    f'{badge}'
+                    f'<span style="font-family:\'IBM Plex Mono\',monospace;'
+                    f'font-size:0.75rem;color:{COLORS["text_muted"]};'
+                    f'margin-left:10px;">{latency}ms</span>',
+                    unsafe_allow_html=True,
+                )
 
     # Input area
     col1, col2 = st.columns([5, 1])
@@ -74,20 +90,3 @@ def render_text_chat_tab(clm_url: str, clm_connected: bool, active_provider: str
                 })
 
         st.rerun()
-
-
-def _show_provider_badge(provider: str):
-    if provider == "claude":
-        st.markdown(
-            'AI Brain: <span style="background:#7C3AED; color:white; '
-            'padding:2px 10px; border-radius:10px; font-size:0.85rem; '
-            'font-weight:600;">Claude</span>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            'AI Brain: <span style="background:#10A37F; color:white; '
-            'padding:2px 10px; border-radius:10px; font-size:0.85rem; '
-            'font-weight:600;">ChatGPT</span>',
-            unsafe_allow_html=True,
-        )

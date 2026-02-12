@@ -63,6 +63,29 @@ ngrok http 8000
 # Set CLM URL to: wss://YOUR-NGROK-URL/ws/clm
 ```
 
+### Switching Hume Accounts / Voice Configurations
+
+Your `.env` file contains three Hume values:
+
+```bash
+HUME_API_KEY=your-key
+HUME_SECRET_KEY=your-secret
+HUME_CONFIG_ID=your-config-id
+```
+
+**These are fully swappable.** If you replace them with someone else's credentials (e.g. your professor's paid account), the app will use *their* Hume configuration — no code changes needed.
+
+**What changes when you swap:**
+- **`HUME_API_KEY` / `HUME_SECRET_KEY`** — Controls which Hume account is used (and who gets billed)
+- **`HUME_CONFIG_ID`** — Controls the EVI configuration, which includes:
+  - **Voice selection** (male vs. female vs. custom voice)
+  - System prompt and language model settings
+  - Prosody/emotion detection settings
+
+So if your config uses a female voice and your professor's config uses a male voice, swapping the Config ID will change the voice. The rest of the app stays the same.
+
+**To keep your voice but use another account's billing:** Ask them to create a new EVI config on their account with your preferred voice, then use that Config ID.
+
 ## Project Structure
 
 ```

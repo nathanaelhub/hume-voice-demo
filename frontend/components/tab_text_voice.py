@@ -1,6 +1,6 @@
 """
-Tab 2: Text + Voice
-=====================
+Tab 2: Text + Voice  (Atmos theme)
+=====================================
 Type a message, get a text response that's also read aloud.
 Uses gTTS (Google Text-to-Speech) to generate audio.
 """
@@ -10,7 +10,7 @@ import io
 import httpx
 import streamlit as st
 
-from components.waveform import render_waveform_mini
+from components.theme import provider_badge_html, PROVIDER_CONFIG, COLORS
 
 try:
     from gtts import gTTS
@@ -22,10 +22,17 @@ except ImportError:
 def render_text_voice_tab(clm_url: str, clm_connected: bool, active_provider: str):
     """Render the Text -> Voice tab."""
 
-    st.markdown("Type a message. The AI responds in text **and reads it aloud**.")
+    st.markdown(
+        f'<p style="font-family:\'Outfit\',sans-serif;color:{COLORS["text_secondary"]};">'
+        f'Type a message. The AI responds in text <strong>and reads it aloud</strong>.</p>',
+        unsafe_allow_html=True,
+    )
 
     # Provider badge
-    _show_provider_badge(active_provider)
+    st.markdown(
+        f'<div style="margin-bottom:12px;">AI Brain: {provider_badge_html(active_provider)}</div>',
+        unsafe_allow_html=True,
+    )
 
     if not GTTS_AVAILABLE:
         st.warning("**gTTS not installed.** Run: `pip install gTTS`")
@@ -45,11 +52,34 @@ def render_text_voice_tab(clm_url: str, clm_connected: bool, active_provider: st
             st.write(msg["content"])
             if msg["role"] == "assistant":
                 if "provider" in msg:
-                    provider_label = "Claude" if msg["provider"] == "claude" else "ChatGPT"
-                    st.caption(f"{provider_label}  ·  {msg.get('latency_ms', '?')}ms")
+                    badge = provider_badge_html(msg["provider"])
+                    latency = msg.get("latency_ms", "?")
+                    st.markdown(
+                        f'{badge}'
+                        f'<span style="font-family:\'IBM Plex Mono\',monospace;'
+                        f'font-size:0.75rem;color:{COLORS["text_muted"]};'
+                        f'margin-left:10px;">{latency}ms</span>',
+                        unsafe_allow_html=True,
+                    )
                 # Play audio if available
                 if msg.get("audio_bytes"):
-                    render_waveform_mini("playing")
+                    cfg = PROVIDER_CONFIG.get(
+                        msg.get("provider", "claude"),
+                        PROVIDER_CONFIG["claude"],
+                    )
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:6px;'
+                        f'margin:4px 0 2px 0;">'
+                        f'<span style="display:inline-block;width:6px;height:6px;'
+                        f'background:{cfg["color"]};border-radius:50%;'
+                        f'animation:atmos_audio_dot 1.2s ease-in-out infinite;"></span>'
+                        f'<span style="font-family:\'IBM Plex Mono\',monospace;'
+                        f'font-size:0.72rem;color:{COLORS["text_muted"]};">'
+                        f'Audio response</span></div>'
+                        f'<style>@keyframes atmos_audio_dot{{'
+                        f'0%,100%{{opacity:1}}50%{{opacity:0.3}}}}</style>',
+                        unsafe_allow_html=True,
+                    )
                     st.audio(msg["audio_bytes"], format="audio/mp3")
 
     # Input area
@@ -119,20 +149,3 @@ def _text_to_audio(text: str) -> bytes | None:
         return buf.read()
     except Exception:
         return None
-
-
-def _show_provider_badge(provider: str):
-    if provider == "claude":
-        st.markdown(
-            'AI Brain: <span style="background:#7C3AED; color:white; '
-            'padding:2px 10px; border-radius:10px; font-size:0.85rem; '
-            'font-weight:600;">Claude</span>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            'AI Brain: <span style="background:#10A37F; color:white; '
-            'padding:2px 10px; border-radius:10px; font-size:0.85rem; '
-            'font-weight:600;">ChatGPT</span>',
-            unsafe_allow_html=True,
-        )
