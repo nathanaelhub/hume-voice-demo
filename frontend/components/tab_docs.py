@@ -121,6 +121,22 @@ and <strong style="color:#00C9A7;">ChatGPT</strong>.
 </table>
     """)
 
+    # --- Why Streamlit ---
+    _card("Why Streamlit?", f"""
+<p>This app is built with <strong>Streamlit</strong>, a Python framework that turns Python scripts into
+web apps. We chose it over tools like React or Next.js for a few reasons:</p>
+
+<ul style="margin:8px 0 8px 18px;color:{sec};">
+    <li><strong style="color:{txt};">Python only</strong> &mdash; no need to learn JavaScript, HTML, CSS, or Node.js</li>
+    <li><strong style="color:{txt};">One command to run</strong> &mdash; <code>streamlit run app.py</code> and you have a working web app</li>
+    <li><strong style="color:{txt};">The focus is the AI</strong> &mdash; Streamlit handles the UI so we can focus on Hume, Claude, and ChatGPT</li>
+</ul>
+
+<p>The tradeoff is that Streamlit is more limited than React for complex interfaces. That's why the
+Voice-to-Voice tab uses custom JavaScript under the hood &mdash; Streamlit can't do live audio streaming
+on its own. For a classroom demo, Streamlit gets you there much faster.</p>
+    """)
+
     # --- Helpful Links ---
     _card("Helpful Links", f"""
 <ul style="list-style:none;padding:0;margin:0;">

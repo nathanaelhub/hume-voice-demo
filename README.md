@@ -93,3 +93,7 @@ Make sure you allowed microphone access when the browser asked. If you accidenta
 ### Can I switch between Claude and ChatGPT?
 
 Yes — use the toggle in the sidebar. It switches instantly on all tabs.
+
+### Why is this built with Streamlit instead of React?
+
+Streamlit is Python-only — no JavaScript, HTML, or CSS knowledge needed. One command (`streamlit run app.py`) gives you a working web app. It lets us focus on the AI parts (Hume, Claude, ChatGPT) instead of spending time on frontend setup.
