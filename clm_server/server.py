@@ -296,7 +296,7 @@ async def _call_claude(conversation: list[dict]) -> str:
         return "Claude API not configured. Set ANTHROPIC_API_KEY in .env"
 
     try:
-        model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+        model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
         response = claude_client.messages.create(
             model=model,
             max_tokens=300,
