@@ -17,6 +17,7 @@ Prerequisites:
 
 import asyncio
 import os
+import sys
 
 from dotenv import load_dotenv
 from hume.client import AsyncHumeClient
@@ -31,13 +32,13 @@ async def main():
     if not api_key:
         print("Error: HUME_API_KEY not set in .env")
         print("Get your key at https://platform.hume.ai/")
-        return
+        sys.exit(1)
 
     if not config_id:
         print("Error: HUME_CONFIG_ID not set in .env")
         print("Create an EVI config at https://platform.hume.ai/")
         print("Make sure to set your CLM URL to your ngrok WebSocket URL")
-        return
+        sys.exit(1)
 
     print("Connecting to Hume EVI...")
     print(f"  Config ID: {config_id}")
