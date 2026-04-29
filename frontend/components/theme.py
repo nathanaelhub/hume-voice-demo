@@ -17,7 +17,7 @@ PROVIDER_CONFIG = {
         "org": "Anthropic",
         "color": "#E8622C",
         "glow": "rgba(232, 98, 44, 0.12)",
-        "model": "claude-3-haiku",
+        "model": "claude-haiku-4.5",
     },
     "openai": {
         "name": "ChatGPT",
